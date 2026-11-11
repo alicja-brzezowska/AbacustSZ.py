@@ -5,7 +5,7 @@ HEALPix light cones of the AbacusSummit N-body simulation suite (Maksimova et al
 arXiv:2110.11398), using the backlight light cone. The repository also contains a
 simulation-based forward model, emulator and Bayesian inference of the gas pressure profile
 from the ACT DR5 x DESI LRG tSZ measurement of Liu et al. (2025, arXiv:2502.08850) as a use case.
-Code for my Master's thesis (University of Cambridge).
+Code for my Master's thesis under Dr. Boryana Hadzhiyska(University of Cambridge).
 
 ## Repository layout
 
