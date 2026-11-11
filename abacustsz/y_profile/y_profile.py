@@ -7,10 +7,11 @@ import numpy as np
 from astropy.cosmology import FlatLambdaCDM
 from scipy.integrate import quad_vec
 
-from abacustsz.cosmology.mass_conversion import (
+from abacustsz.cosmology.model import (
     H_ABACUS, OMEGA_B_ABACUS, OMEGA_C_ABACUS,
 )
 from abacustsz.paths import DATA_PATH
+from abacustsz.y_profile.closure_radius import LOS_GEOMETRY, truncation_radius_r200c
 
 
 class Battaglia16ThermalSZProfile:
@@ -79,7 +80,15 @@ def dimensionless_P_profile_los(model, r, M_200, z):
     theta_200 = angular_size(model, R_200, z)
     x = r / theta_200
 
-    integral = nfw_los(x, xc, alpha, beta, gamma)
+    zmax = float(truncation_radius_r200c(np.log10(M_200)))
+    if LOS_GEOMETRY == "sphere":
+        x = np.asarray(x, dtype=float)
+        ymax = np.sqrt(np.maximum(zmax**2 - x**2, 0.0))
+        integral = np.array([nfw_los(xi, xc, alpha, beta, gamma, zmax=yi) if yi > 0 else 0.0
+                             for xi, yi in zip(np.atleast_1d(x), np.atleast_1d(ymax))])
+        integral = integral.reshape(np.shape(x))
+    else:
+        integral = nfw_los(x, xc, alpha, beta, gamma, zmax=zmax)
     return P0 * integral
 
 

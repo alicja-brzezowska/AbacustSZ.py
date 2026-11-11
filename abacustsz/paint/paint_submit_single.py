@@ -63,7 +63,9 @@ def run_one(config, halo_catalog_index, logm_min, run_name, out_dir):
                 "nside": config.nside,
                 "nest": True,
                 "redshift": data.redshift,
-                "search_radius_multiplier": config.search_radius,
+                "search_radius_low_mass": config.search_radius_low_mass,
+                "search_radius_high_mass": config.search_radius_high_mass,
+                "search_radius_mass_threshold_msun": config.search_radius_mass_threshold_msun,
                 "bin_width": config.weight_bin_width,
                 "halo_geometry": config.halo_geometry,
                 "healpix_file": str(HEALCOUNTS_FILE),
@@ -109,7 +111,10 @@ def main():
     setup_logging("main")
 
     config = PainterConfig(
-        nside=NSIDE, search_radius=N, weight_bin_width=WEIGHT_BIN_WIDTH
+        nside=NSIDE,
+        search_radius_low_mass=N,
+        search_radius_high_mass=N,
+        weight_bin_width=WEIGHT_BIN_WIDTH,
     )
     halo_catalog_index = load_halo_catalog_index(
         OUTPUT_PATH / "halo_catalog_index.json"

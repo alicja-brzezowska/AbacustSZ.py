@@ -60,7 +60,7 @@ def query_tree(
     """
     N_halos = halo_xyz.shape[0]
 
-    search_angles = config.search_radius * r_90
+    search_angles = config.search_radius_low_mass * r_90
     search_radii = 2.0 * np.sin(0.5 * search_angles)
 
     pix_in_halos = particle_tree.query_ball_point(x=halo_xyz, r=search_radii)
@@ -102,10 +102,6 @@ def query_tree(
     # exclude pixels not in any halo:
     particle_xyz = particle_xyz[pix_in_halos]
     halo_xyz = halo_xyz[halo_indices]
-
-    # obtain the angular distances between particles and the halo centers:
-    # chord_distances = np.linalg.norm(particle_xyz - halo_xyz, axis=1)       
-    # distances = 2.0 * np.arcsin(np.clip(chord_distances / 2.0, -1.0, 1.0))
 
     pix_theta, pix_phi = convert_cart_to_rad(particle_xyz)
     halo_theta, halo_phi = convert_cart_to_rad(halo_xyz)

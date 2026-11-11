@@ -114,8 +114,6 @@ class Visualizer:
             for t in list(ax.texts):
                 t.set_visible(False)
 
-        # Compute tick values now (needs ax limits) but defer drawing until after
-        # tight_layout so the overlay axes lands on the settled map position.
         tick_overlay_data = None
         if angular_scale_unit is not None:
             reso_amin = hp.nside2resol(self.nside, arcmin=True) / (
@@ -153,7 +151,6 @@ class Visualizer:
         cbar_repositioned = False
         if colorbar_label is not None:
             if len(fig.axes) > 1:
-                # tight_layout must run before we read/set any positions.
                 plt.tight_layout()
                 cbar_ax = fig.axes[-1]
                 cbar_ax.text(

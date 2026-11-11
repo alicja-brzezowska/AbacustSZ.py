@@ -11,13 +11,18 @@ import numpy as np
 from loguru import logger
 
 from abacustsz.converters import convert_rad_to_cart
-from abacustsz.cosmology.model import get_angular_size_from_comoving
+from abacustsz.cosmology.angular_size import get_angular_size_from_comoving
 from abacustsz.logging import memory_usage, time_calls, trace_calls
 from abacustsz.paint.abacus_loader import SimulationData, load_abacus_for_painting
 from abacustsz.paint.config import PainterConfig
 from abacustsz.paint.pixel_search import find_pixels_in_halos
 from abacustsz.paint.weights import compute_weights
 from abacustsz.paths import INTERPOLATORS_PATH
+from abacustsz.y_profile.closure_radius import (
+    closure_radius_r200c,
+    describe_table,
+    truncation_tag,
+)
 from abacustsz.y_profile.interpolator import BattagliaLogInterpolator
 from abacustsz.y_profile.y_profile import create_battaglia_profile
 
@@ -49,6 +54,34 @@ def get_real_space_from_eigenvals(
     b = ratio_ba * a
     c = ratio_ca * a
     return np.stack([a, b, c], axis=1)
+
+
+def search_radius_multiplier(config: PainterConfig, m_halos_msun: np.ndarray) -> np.ndarray:
+    if config.search_radius_mode == "closure":
+        mult = closure_radius_r200c(np.log10(m_halos_msun))
+    elif config.search_radius_mode == "legacy":
+        mult = np.where(
+            m_halos_msun < config.search_radius_mass_threshold_msun,
+            config.search_radius_low_mass,
+            config.search_radius_high_mass,
+        )
+    else:
+        raise ValueError(f"Unknown search_radius_mode {config.search_radius_mode!r}")
+    return np.asarray(mult, dtype=np.float32)
+
+
+def search_radius_header(config: PainterConfig) -> dict:
+    if config.search_radius_mode == "closure":
+        return {
+            "search_radius_mode": "closure",
+            "search_radius_table": truncation_tag("closure"),
+        }
+    return {
+        "search_radius_mode": "legacy",
+        "search_radius_low_mass": config.search_radius_low_mass,
+        "search_radius_high_mass": config.search_radius_high_mass,
+        "search_radius_mass_threshold_msun": config.search_radius_mass_threshold_msun,
+    }
 
 
 @dataclass
@@ -102,24 +135,32 @@ def build_paint_context(
         spherical_r_comoving = np.asarray(data.radii_halos, dtype=np.float32)
         semi_axes_comoving = np.repeat(spherical_r_comoving[:, None], 3, axis=1)
 
+    search_radius = search_radius_multiplier(config, data.m_halos)
+    logger.info(
+        f"search radius mode={config.search_radius_mode}: multiplier on R200c "
+        f"min={search_radius.min():.2f}, median={np.median(search_radius):.2f}, "
+        f"max={search_radius.max():.2f}"
+    )
+
     semi_axes_angular = get_angular_size_from_comoving(
         MODEL, semi_axes_comoving, data.redshift
     )
-    semi_axes_angular *= config.search_radius
+    semi_axes_angular *= search_radius[:, None]
 
+    n_workers = config.pixel_search_workers or int(os.environ.get("SLURM_CPUS_PER_TASK", 8))
     pix_in_halos, zeta, halo_starts, halo_counts, halo_indices, projected_r_eff_2d = (
         find_pixels_in_halos(
             config.nside,
             halo_xyz,
             semi_axes_angular,
             data.eigenvectors,
-            n_workers=8,
+            n_workers=n_workers,
             geometry=config.halo_geometry,
         )
     )
 
     r_search = projected_r_eff_2d
-    r_90_equiv = r_search / config.search_radius
+    r_90_equiv = r_search / search_radius
 
     logger.info(
         f"r_search stats: min={r_search.min():.3e}, median={np.median(r_search):.3e}, max={r_search.max():.3e}"
@@ -135,6 +176,7 @@ def build_paint_context(
             halo_starts=halo_starts,
             halo_counts=halo_counts,
             r_90=r_90_equiv,
+            search_radius=search_radius,
             particle_counts=data.particle_counts,
             method="vectorized",
         )
@@ -168,6 +210,20 @@ def build_paint_context(
     )
 
 
+def _slice_simulation_data(data: SimulationData, halo_idx: np.ndarray) -> SimulationData:
+    return SimulationData(
+        theta=data.theta[halo_idx],
+        phi=data.phi[halo_idx],
+        m_halos=data.m_halos[halo_idx],
+        particle_counts=data.particle_counts,
+        redshift=data.redshift,
+        radii_halos=data.radii_halos[halo_idx],
+        eigenvalues=data.eigenvalues[halo_idx],
+        eigenvectors=data.eigenvectors[halo_idx],
+        chi=data.chi[halo_idx] if data.chi is not None else None,
+    )
+
+
 def paint_one_interpolator(
     ctx: PaintContext,
     interpolator: BattagliaLogInterpolator,
@@ -175,10 +231,11 @@ def paint_one_interpolator(
     y_values = interpolator.eval_for_logs(
         ctx.log_distances, ctx.z_values, ctx.log_M_values
     ) 
-    y_values *= ctx.weights
-    y_map = np.zeros(hp.nside2npix(ctx.config.nside), dtype=np.float32)
-    np.add.at(y_map, ctx.pix_in_halos, y_values)
-    return y_map
+    y_values = np.asarray(y_values, dtype=np.float64) * ctx.weights
+    y_map = np.bincount(
+        ctx.pix_in_halos, weights=y_values, minlength=hp.nside2npix(ctx.config.nside)
+    )
+    return y_map.astype(np.float32)
 
 
 def _make_short_filename(interp_stem: str) -> str:
@@ -242,8 +299,6 @@ def paint_y_maps(
     run_label: str = "",
     interp_dir: Path | None = None,
 ):
-    ctx = build_paint_context(config, data, use_weights=use_weights)
-
     if output_file:
         output_path = Path(output_file)
         step_name = (
@@ -262,35 +317,28 @@ def paint_y_maps(
         if re.search(r"alpha=", Path(f).name)
     )
 
-    for int_filename in interp_files:
-        logger.info(f"Processing interpolator: {Path(int_filename).name}")
-        interpolator = BattagliaLogInterpolator.from_pickle(Path(int_filename))
-        ymap = paint_one_interpolator(ctx, interpolator)
-        del interpolator
+    def _output_path_for(int_filename: str) -> Path | None:
+        if not output_file:
+            return None
+        interp_stem = Path(int_filename).stem
+        short_name = _make_short_filename(interp_stem)
+        return step_dir / f"{short_name}.asdf"
 
+    def _write_map(int_filename: str, out: Path | None, ymap: np.ndarray):
         ymap_max = float(ymap.max())
         if ymap_max > 1.0:
             logger.warning(f"UNPHYSICAL ymap max={ymap_max:.3e} — possible interpolator extrapolation!")
         else:
             logger.info(f"ymap max={ymap_max:.3e}")
 
-        if output_file:
-            interp_stem = Path(int_filename).stem
-            short_name = _make_short_filename(interp_stem)
-            out = step_dir / f"{short_name}.asdf"
-            if out.exists() and not out.is_symlink():
-                logger.info(f"Output file exists, skipping: {out}")
-                del ymap
-                continue
-            if out.is_symlink():
-                out.unlink()
+        if out is not None:
             af = asdf.AsdfFile(
                 {
                     "header": {
                         "nside": config.nside,
                         "nest": True,
                         "redshift": data.redshift,
-                        "search_radius_multiplier": config.search_radius,
+                        **search_radius_header(config),
                         "bin_width": config.weight_bin_width,
                         "halo_geometry": config.halo_geometry,
                         "healpix_file": str(healcounts_file_1)
@@ -307,4 +355,64 @@ def paint_y_maps(
             af.write_to(out)
             logger.info(f"Saved to {out}")
 
-        del ymap
+    n_batches = max(1, config.n_halo_batches)
+
+    if n_batches <= 1:
+        ctx = build_paint_context(config, data, use_weights=use_weights)
+
+        for int_filename in interp_files:
+            logger.info(f"Processing interpolator: {Path(int_filename).name}")
+            out = _output_path_for(int_filename)
+            if out is not None and out.exists() and not out.is_symlink():
+                logger.info(f"Output file exists, skipping: {out}")
+                continue
+            if out is not None and out.is_symlink():
+                out.unlink()
+
+            interpolator = BattagliaLogInterpolator.from_pickle(Path(int_filename))
+            ymap = paint_one_interpolator(ctx, interpolator)
+            del interpolator
+
+            _write_map(int_filename, out, ymap)
+            del ymap
+        return
+
+    targets = []
+    for int_filename in interp_files:
+        out = _output_path_for(int_filename)
+        if out is not None and out.exists() and not out.is_symlink():
+            logger.info(f"Output file exists, skipping: {out}")
+            continue
+        if out is not None and out.is_symlink():
+            out.unlink()
+        targets.append((int_filename, out))
+
+    if not targets:
+        return
+
+    interpolators = {
+        int_filename: BattagliaLogInterpolator.from_pickle(Path(int_filename))
+        for int_filename, _ in targets
+    }
+    npix = hp.nside2npix(config.nside)
+    y_maps = {int_filename: np.zeros(npix, dtype=np.float32) for int_filename, _ in targets}
+
+    n_halos = len(data.m_halos)
+    batches = [b for b in np.array_split(np.arange(n_halos), n_batches) if len(b) > 0]
+
+    for i, halo_idx in enumerate(batches):
+        logger.info(f"Halo batch {i + 1}/{len(batches)}: {len(halo_idx):,} halos")
+        batch_data = _slice_simulation_data(data, halo_idx)
+        ctx = build_paint_context(config, batch_data, use_weights=use_weights)
+
+        for int_filename, _ in targets:
+            logger.info(f"  Processing interpolator: {Path(int_filename).name}")
+            contribution = paint_one_interpolator(ctx, interpolators[int_filename])
+            y_maps[int_filename] += contribution
+            del contribution
+
+        del ctx
+
+    for int_filename, out in targets:
+        _write_map(int_filename, out, y_maps[int_filename])
+        del y_maps[int_filename]

@@ -98,7 +98,6 @@ def find_pixels_in_halos(
         if len(pixels) == 0:
             return i, np.array([], dtype=np.int64), np.array([]), query_radius
 
-        # Compute angular distances from halo center
         cosang = np.clip(pixel_xyz[mask] @ n0, -1.0, 1.0)
         distances = np.arccos(cosang)
 
@@ -117,7 +116,6 @@ def find_pixels_in_halos(
                 results[i] = (pixels, distances)
                 halo_effective_radius[i] = r_eff_2d
 
-    # Flatten results
     with timer("Flattening parallel results"):
         all_pixels = []
         all_distances = []

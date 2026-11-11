@@ -10,7 +10,12 @@ from abacusnbody.data.compaso_halo_catalog import (
 )
 
 from abacustsz.converters import convert_comoving_to_sky, convert_rad_to_cart
-from abacustsz.cosmology.mass_conversion import m200m_to_m200c
+from abacustsz.cosmology.model import (
+    H_ABACUS,
+    MAX_M200C_MSUN,
+    m200m_to_m200c,
+    mdeltamean_to_m200m,
+)
 
 
 @dataclass
@@ -61,6 +66,7 @@ def load_abacus_halos(
         particle_mass = h["ParticleMassHMsun"]
         redshift = h["Redshift"]
         box_size = h["BoxSizeMpc"]
+        so_density_l1 = h["SODensityL1"]
 
         d = af["halo_lightcone"]
         halo_xyz = np.asarray(d["Interpolated_x_L2com"])
@@ -70,7 +76,7 @@ def load_abacus_halos(
 
         m_halos = num_particles.astype(np.float64) * particle_mass
 
-        # need a cut-off for memory reasons: 11.5 comfortably below
+        # mass cut to limit memory
         threshold = 10**logm_min
         cut = m_halos > threshold
 
@@ -81,6 +87,9 @@ def load_abacus_halos(
         halo_timeslice_index = halo_timeslice_index[cut]
         comoving_distance = comoving_distance[cut]
 
+        # CompaSO masses are defined at SODensityL1 x mean density, not 200m
+        m_halos = mdeltamean_to_m200m(m_halos, so_density_l1, redshift)
+
         e = af["halo_timeslice"]
         r100_ref = np.asarray(e["r100_L2com"], dtype=np.float64)
 
@@ -88,7 +97,7 @@ def load_abacus_halos(
         eigenvalues = np.asarray(e["sigman_L2com_i16"], dtype=np.float64)
         eigenvectors = np.asarray(e["sigman_eigenvecs_L2com_u16"], dtype=np.float64)
 
-        # u16 is a smart custom encoding of the eigenvectors, again convert to float
+        # eigenvectors are stored in Abacus's compressed uint16 encoding
         sigmar_min, sigmar_mid, sigmar_maj = unpack_euler16(eigenvectors)
 
         r100_ref = r100_ref[halo_timeslice_index]
@@ -113,6 +122,7 @@ def load_abacus_halos(
         comoving_distance,
         eigenvalues,
         eigenvectors,
+        m_halos,
     )
 
 
@@ -120,9 +130,8 @@ def load_abacus_for_painting(
     halo_catalog_index: list,  # list[HaloCatalogInfo] from load_halo_catalog_index()
     healcounts_file_1: Path,
     nside: int | None = None,
-    logm_min: float = 11.5,  # want to capture as many small halos as possible, but memory blows up for querying large halo catalogs
+    logm_min: float = 11.5,
 ):
-    """ """
     chi_min, chi_max = obtain_healcount_edges(healcounts_file_1)
     redshift = obtain_healcount_mean_redshift(healcounts_file_1)
     chi_min_cut = chi_min
@@ -139,10 +148,10 @@ def load_abacus_for_painting(
             "Check your halo_catalog_index."
         )
 
-    all_xyz, all_npart, all_evals, all_evecs, all_chi = [], [], [], [], []
+    all_xyz, all_npart, all_evals, all_evecs, all_chi, all_m200m = [], [], [], [], [], []
     particle_mass = None
     for cat in matching:
-        xyz, npart, pm, _, comoving_distance, evals, evecs = load_abacus_halos(
+        xyz, npart, pm, _, comoving_distance, evals, evecs, m200m = load_abacus_halos(
             cat.file_path, logm_min=logm_min
         )
         if particle_mass is None:
@@ -155,21 +164,31 @@ def load_abacus_for_painting(
         all_evals.append(evals[in_shell])
         all_evecs.append(evecs[in_shell])
         all_chi.append(comoving_distance[in_shell])
+        all_m200m.append(m200m[in_shell])
 
     halo_xyz = np.concatenate(all_xyz)
     num_particles = np.concatenate(all_npart)
     eigenvalues = np.concatenate(all_evals)
     eigenvectors = np.concatenate(all_evecs)
     chi = np.concatenate(all_chi)
+    m_halos = np.concatenate(all_m200m)
 
     theta, phi = convert_comoving_to_sky(halo_xyz)
-    H_ABACUS = 0.6736
-    m_halos = num_particles.astype(np.float64) * particle_mass  # M200m [Msun/h]
     m_halos, r200c_physical_kpch = m200m_to_m200c(m_halos, redshift)  # M200c [Msun/h], r200c [physical kpc/h]
     m_halos = m_halos / H_ABACUS  # M200c [Msun], as expected by Battaglia interpolator
     radius = (r200c_physical_kpch / 1000) * (1 + redshift)  # physical kpc/h -> comoving Mpc/h
     particle_counts = load_abacus_healcounts(healcounts_file_1)
     chi = np.linalg.norm(halo_xyz, axis=1)
+
+    # remove halos that are masked in ACT DR5
+    mass_cut = m_halos <= MAX_M200C_MSUN
+    theta = theta[mass_cut]
+    phi = phi[mass_cut]
+    m_halos = m_halos[mass_cut]
+    radius = radius[mass_cut]
+    eigenvalues = eigenvalues[mass_cut]
+    eigenvectors = eigenvectors[mass_cut]
+    chi = chi[mass_cut]
 
     return SimulationData(
         theta,

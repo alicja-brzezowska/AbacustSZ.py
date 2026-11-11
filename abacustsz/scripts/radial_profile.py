@@ -5,7 +5,7 @@ import healpy as hp
 import numpy as np
 from loguru import logger
 
-from abacustsz.cosmology.model import compute_theta_200
+from abacustsz.cosmology.angular_size import compute_theta_200
 from abacustsz.paint.abacus_loader import SimulationData
 from abacustsz.y_profile.interpolator import BattagliaLogInterpolator
 from abacustsz.y_profile.y_profile import Battaglia16ThermalSZProfile

@@ -8,18 +8,24 @@ import numpy as np
 import unxt as u
 from jax.typing import ArrayLike
 from loguru import logger
-from quadax import quadts  # jax friendly quadrature integration
-from wcosmo import comoving_distance, efunc  # jax friendly atropy.cosmology
+from quadax import quadts
+from wcosmo import comoving_distance, efunc  # jax-compatible astropy.cosmology
 from wcosmo.utils import (
     disable_units,  # wcosmo objects have defaults units; disable as jax arrays don't support units
 )
 
 import abacustsz.constants as const
 from abacustsz.conf.config_schema import YProfileConfig
-from abacustsz.cosmology.mass_conversion import (
+from abacustsz.cosmology.model import (
     H_ABACUS, OMEGA_B_ABACUS, OMEGA_C_ABACUS,
 )
 from abacustsz.paths import INTERPOLATORS_PATH
+from abacustsz.y_profile.closure_radius import (
+    LOS_GEOMETRY,
+    TRUNCATION_MODE,
+    truncation_radius_r200c_jax,
+    truncation_tag,
+)
 
 jax.config.update("jax_enable_x64", True)
 disable_units()
@@ -30,7 +36,6 @@ G_VALUE = const.G_SI.value
 
 DELTA = 200
 SCALE = 1e9
-ZMAX = 2.0
 RTOL = 1e-4
 
 
@@ -58,7 +63,6 @@ def get_gnfw_params(
     P0 = 10.0**log10_P0 * m**0.154 * z1 ** (-0.758)
     xc = 0.497 * m ** (-0.00865) * z1**0.731  # dimensionless scale radius
     beta = beta0 * m**0.0393 * z1**0.415
-    # P(x) = P0 * x^gamma * (1+x^alpha)^(-beta), Battaglia et al. 2012 convention
     return xc, alpha, beta, gamma, P0
 
 
@@ -103,11 +107,20 @@ def y_value(
         generalized_nfw = x_bar**gamma * (1 + x_bar**alpha) ** (-beta)
         return SCALE * generalized_nfw
 
+    zmax = truncation_radius_r200c_jax(log_mass)
+    if LOS_GEOMETRY == "sphere":
+        ymax = jnp.sqrt(jnp.maximum(zmax**2 - x_sq, 0.0))
+        inside = ymax > 0.0
+        ymax = jnp.where(inside, ymax, 1.0)  # avoid an empty interval; masked below
+    else:
+        ymax = zmax
+        inside = True
     integral_value, _ = quadts(
         integrand,
-        [0.0, ZMAX],
+        [0.0, ymax],
         epsrel=RTOL,
     )
+    integral_value = jnp.where(inside, integral_value, 0.0)
 
     integral = 2.0 * integral_value / SCALE
     P_tilde = P0 * integral
@@ -177,7 +190,7 @@ def measure_y_values(
     )
 
     t = perf_counter()
-    chunk_size = 65536  # tune based on RAM
+    chunk_size = 65536
     results = []
     for i in range(0, theta_flat.size, chunk_size):
         y_chunk = vmap_all_jitted(
@@ -219,6 +232,7 @@ def dump_to_file(
                 "redshifts": np.asarray(redshifts),
                 "log_masses": np.asarray(log_masses),
                 "prof_y": np.asarray(y_grid),
+                "truncation": truncation_tag(),
             },
             f,
         )
@@ -226,5 +240,6 @@ def dump_to_file(
 
 def run_y_profile(conf: YProfileConfig):
     logger.info(f"Running y_profile with config {conf}")
+    logger.info(f"LOS truncation scheme: {TRUNCATION_MODE}, {LOS_GEOMETRY} ({truncation_tag()})")
     y_values = measure_y_values(conf)
     dump_to_file(conf, *y_values)
