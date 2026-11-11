@@ -169,8 +169,6 @@ uv run python inference/inference.py training_f150.npz
 Truncation options (environment variables): `TSZ_TRUNCATION_MODE` (`closure` / `legacy`),
 `TSZ_CLOSURE_TABLE` (`flamingo_hifb` / `z0p75`), `TSZ_LOS_GEOMETRY` (`cylinder` / `sphere`).
 
-The included training set uses the legacy truncation (10 R200c below 1e14 Msun, 4 R200c above).
-Row 115 has 6 of 20 shells summed and is excluded.
 
 ## Credits
 
