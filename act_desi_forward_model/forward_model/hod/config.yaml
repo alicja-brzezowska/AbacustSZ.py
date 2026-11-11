@@ -1,0 +1,43 @@
+sim_params:
+    sim_name: 'lightcone_halos'
+    sim_dir: '/path/to/backlight_cp999'           # same as ABACUS_DATA_PATH
+    output_dir: '/path/to/output/hod_mocks'
+    subsample_dir: '/path/to/output/hod_subsamples'
+    z_mock: 0.503                                 # overridden by --z / --alt_z
+    halo_lc: True
+    cleaned_halos: False
+
+prepare_sim:
+    Nparallel_load: 1
+    Nthread_per_load: 8
+
+HOD_params:
+    want_ranks: True
+    want_AB: False
+    tracer_flags:
+        LRG: True
+        ELG: False
+        QSO: False
+    want_rsd: True
+    write_to_disk: True
+
+    # Within the 1-sigma intervals of the DESI One-Percent LRG fit at 0.6 < z < 0.8
+    # (Yuan et al. 2024, arXiv:2306.06314, Table 3), tuned to a galaxy-weighted
+    # mean host mass log10(<M>/[Msun/h]) = 13.22.
+    LRG_params:
+        logM_cut: 12.5900
+        logM1: 13.7716
+        sigma: 0.1800
+        alpha: 1.0903
+        kappa: 0.5930
+        alpha_c: 0
+        alpha_s: 1
+        s: 0
+        s_v: 0
+        s_p: 0
+        s_r: 0
+        Acent: -7.31189630e-01
+        Asat: -2.41898268e-01
+        Bcent: -9.37221616e-03
+        Bsat: 3.74532572e-02
+        ic: 0.97
