@@ -42,17 +42,111 @@ AbacustSZ/
 └── uv.lock
 ```
 
-## Inference (laptop)
+## Using abacustSZ.py
+
+### Requirements
+
+```bash
+uv sync --all-extras
+```
+
+Simulation products requirements:
+The maps are painted from two AbacusSummit_backlight_cp999 light-cone products, which must
+cover the redshift range of the y-map you want:
+
+- heal-counts shells (`LightCone0_total_heal-counts_Step<NNNN-NNNN>.asdf`): each file is one
+  shell of the light cone, and its header gives the shell's redshift and comoving distance;
+- light-cone halo catalogues (`z<z>/lightcone_halo_info_000.asdf`): each shell is painted with
+  the halos of the snapshots whose distance range overlaps it, so you need the snapshots that
+  bracket your redshift range.
+
+
+```bash
+export ABACUS_DATA_PATH=/path/to/backlight_cp999
+export ABACUSTSZ_OUTPUT=/path/to/output
+uv run python -m abacustsz.scripts.match_redshifts      # index the halo catalogues (once)
+```
+
+### Generating y-maps
+
+**1. Choose the pressure profile.** The gas pressure follows a generalised NFW profile
+(Battaglia et al. 2012),
+
+$$
+\frac{P(x)}{P_{200}} = P_0(M,z) \left(\frac{x}{x_c}\right)^{\gamma} \left[1 + \left(\frac{x}{x_c}\right)^{\alpha}\right]^{-\beta(M,z)},
+\qquad x = \frac{r}{R_{200c}},
+$$
+
+with the mass and redshift dependence
+
+$$
+P_0(M,z) = P_0 \left(\frac{M}{10^{14}\,M_\odot}\right)^{0.154} (1+z)^{-0.758}, \qquad
+x_c(M,z) = 0.497 \left(\frac{M}{10^{14}\,M_\odot}\right)^{-0.00865} (1+z)^{0.731},
+$$
+
+$$
+\beta(M,z) = \beta_0 \left(\frac{M}{10^{14}\,M_\odot}\right)^{0.0393} (1+z)^{0.415}.
+$$
+
+The free parameters are $(\alpha, \beta_0, \gamma, \log_{10} P_0)$, with $M \equiv M_{200c}$; Battaglia et al. find $(1, 4.35, -0.3, 1.26)$.
+
+The profile is truncated at the baryon closure radius by default. Environment variables:
+`TSZ_TRUNCATION_MODE` (`closure` / `legacy`), `TSZ_CLOSURE_TABLE` (`flamingo_hifb` / `z0p75`),
+`TSZ_LOS_GEOMETRY` (`cylinder` / `sphere`).
+
+**2. Tabulate y(theta, z, M)** for those parameters, (default grid: 0.2 < z < 1, 10^11 < M < 10^15.7 Msun):
+
+```bash
+uv run python -m abacustsz.y_profile.y_profile_jax --alpha 1 --beta0 4.35 --gamma -0.3 --log10-P0 1.26
+```
+
+This takes ~15 min on 32 cores and writes the table to `$ABACUSTSZ_OUTPUT/interpolators/`.
+
+**3. Paint a shell** with every table in that folder (or `--interp-dir <folder>`):
+
+```bash
+uv run python -m abacustsz.paint.main --step LightCone0_total_heal-counts_Step0628-0634.asdf
+```
+
+Each table gives one full-sky HEALPix map (NESTED, nside 8192) in `$ABACUSTSZ_OUTPUT/Step0XXX-0XXX/`:
+
+```python
+import asdf
+with asdf.open(path) as f:
+    y = f["data"]["y_map"][:]
+```
+
+Halos are painted as triaxial ellipsoids, weighted by the particle counts of the heal-counts map.
+Halos with N m_p < 10^11.5 Msun/h are skipped, and halos above the ACT DR5 cluster-mask threshold
+(M500c > 3.8e14 Msun) are removed (manually change the upper and lower mass threshold for needs).
+
+
+On a SLURM cluster, submit one job per shell, e.g.
+
+```bash
+sbatch -A <ACCOUNT> -p <PARTITION> -c 32 --mem=100G -t 4:00:00 --wrap \
+    "uv run python -m abacustsz.paint.main --step LightCone0_total_heal-counts_Step0628-0634.asdf"
+```
+
+On a workstation, painting a few tables needs ~64 GB of memory; `--n-halo-batches N` runs the
+pixel search in N batches to lower it (all maps are then kept in memory, 3.2 GB each).
+
+`act_desi_forward_model/forward_model/sum_y_maps.py` sums painted shells into one light-cone map.
+
+
+## Running the Forward model for stacked tSZ profiles around DESI LRGs: 
+
+### Inference (laptop)
 
 ```bash
 uv sync --extra inference
 cd act_desi_forward_model
-uv run python inference/inference.py data/training_sets/lhc128_ringring_f150.npz --exclude-rows 115
+uv run python inference/inference.py data/training_sets/lhc128_ringring_f150.npz 
 ```
 
-## Forward model (SLURM cluster)
+### Full Forward model (SLURM cluster)
 
-Needs the AbacusSummit_backlight_cp999 light cone.
+Needs the AbacusSummit_backlight_cp999 light cone products and Halo Catalogs.
 
 ```bash
 uv sync --all-extras
