@@ -59,8 +59,9 @@ def get_real_space_from_eigenvals(
     eigenvalues = np.maximum(np.asarray(eigenvalues, dtype=np.float32), eps)
     r98 = np.asarray(r98, dtype=np.float32)
 
-    ratio_ba = np.sqrt(eigenvalues[:, 2] / eigenvalues[:, 1])
-    ratio_ca = np.sqrt(eigenvalues[:, 2] / eigenvalues[:, 0])
+    # sigman values are already sqrt(eigenvalues), ordered major > middle > minor
+    ratio_ba = eigenvalues[:, 1] / eigenvalues[:, 0]
+    ratio_ca = eigenvalues[:, 2] / eigenvalues[:, 0]
 
     a = r98 / np.cbrt(ratio_ba * ratio_ca)
     b = ratio_ba * a
