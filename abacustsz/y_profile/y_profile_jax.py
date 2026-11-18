@@ -243,3 +243,21 @@ def run_y_profile(conf: YProfileConfig):
     logger.info(f"LOS truncation scheme: {TRUNCATION_MODE}, {LOS_GEOMETRY} ({truncation_tag()})")
     y_values = measure_y_values(conf)
     dump_to_file(conf, *y_values)
+
+
+def main():
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Tabulate y(theta, z, M) for one set of gNFW parameters.")
+    parser.add_argument("--alpha", type=float, required=True)
+    parser.add_argument("--beta0", type=float, required=True)
+    parser.add_argument("--gamma", type=float, required=True)
+    parser.add_argument("--log10-P0", type=float, required=True)
+    args = parser.parse_args()
+    conf = YProfileConfig(args.alpha, args.beta0, args.gamma, args.log10_P0)
+    run_y_profile(conf)
+    logger.info(f"Saved {output_file_path(conf)}")
+
+
+if __name__ == "__main__":
+    main()
