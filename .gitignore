@@ -10,3 +10,4 @@ output/
 logs/
 results/
 *.pkl
+!act_desi_forward_model/data/emulators/*.pkl

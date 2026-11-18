@@ -33,10 +33,14 @@ AbacustSZ/
 │   │   ├── emulator.py         # Gaussian-process emulator of the stacked profile
 │   │   └── inference.py        # Nested-sampling fit to the ACT data (dynesty)
 │   │
+│   ├── scripts/
+│   │   └── validation.py       # Emulator tests: leave-one-out and parameter recovery of held-out points
+│   │
 │   └── data/
 │       ├── fig15.csv, fig15_cov.npz   # ACT x DESI LRG profiles + covariance (Liu et al. 2025)
 │       ├── light_cone_shells.txt      # Painted shells and their halo snapshots
-│       └── training_sets/             # Stacked profiles of the 128 LHC maps (emulator training set)
+│       ├── training_sets/             # Stacked profiles of the 128 LHC maps (emulator training set)
+│       └── emulators/                 # Trained GP emulator (f150, row 115 excluded; scikit-learn 1.9.1)
 │
 ├── README.md
 ├── pyproject.toml
@@ -143,6 +147,8 @@ pixel search in N batches to lower it (all maps are then kept in memory, 3.2 GB 
 uv sync --extra inference
 cd act_desi_forward_model
 uv run python inference/inference.py data/training_sets/lhc128_ringring_f150.npz 
+uv run python inference/inference.py data/training_sets/lhc128_ringring_f150.npz --exclude-rows 115 --emulator data/emulators/lhc128_ringring_f150_excl115.pkl
+uv run python scripts/validation.py data/training_sets/lhc128_ringring_f150.npz --exclude-rows 115 --nproc 8
 ```
 
 ### Full Forward model (SLURM cluster)
