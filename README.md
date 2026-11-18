@@ -33,6 +33,11 @@ AbacustSZ/
 │   │   ├── emulator.py         # Gaussian-process emulator of the stacked profile
 │   │   └── inference.py        # Nested-sampling fit to the ACT data (dynesty)
 │   │
+│   ├── semi_analytic/          # Halo-model prediction of the same profile, no painting or emulator
+│   │   ├── halo_model.py       # gNFW profile, mass function, bias, beam and ring-ring filter
+│   │   ├── direct_model.py     # 1-halo (with off-centre satellites) and 2-halo terms
+│   │   └── run_direct.py       # Nested-sampling fit to the ACT data, model evaluated at every step
+│   │
 │   ├── scripts/
 │   │   └── validation.py       # Emulator tests: leave-one-out and parameter recovery of held-out points
 │   │
@@ -175,11 +180,32 @@ uv run python inference/inference.py training_f150.npz
 Truncation options (environment variables): `TSZ_TRUNCATION_MODE` (`closure` / `legacy`),
 `TSZ_CLOSURE_TABLE` (`flamingo_hifb` / `z0p75`), `TSZ_LOS_GEOMETRY` (`cylinder` / `sphere`).
 
+### Semi-analytic model (direct evaluation)
+
+The stacked profile from the halo model, Y = Y_1h + A_2h Y_2h, computed at every likelihood call
+(~0.1 s) instead of emulated. The LRG host masses, redshifts and central/satellite split are
+taken from the HOD mocks (`hod/run_hod.py`), so it needs those and the light-cone headers, but
+no painted maps. Satellites sit on an NFW distribution around their host centre
+(`--no-satellites` puts them at the centre). The profile is truncated in a sphere at the
+closure radius (`TSZ_CLOSURE_TABLE`, `TSZ_TRUNCATION_MODE`).
+
+```bash
+uv sync --extra inference
+export ABACUS_DATA_PATH=/path/to/backlight_cp999
+export ABACUSTSZ_OUTPUT=/path/to/output     # contains hod_mocks/lightcone_halos/z*/galaxies_rsd/LRGs.dat
+cd act_desi_forward_model/semi_analytic
+uv run python run_direct.py --freq 150 --fix-gamma -0.3 --a2h-max 5 --nproc 32 --out results_direct_f150
+```
+
+A run with 1500 live points takes about an hour on 56 cores; `--resume` continues from
+`<out>/dynesty.save`.
+
 
 ## Credits
 
 - ACT x DESI LRG profiles: Liu et al. 2025, PRD 112, 083561, arXiv:2502.08850
 - Pressure profile: Battaglia et al. 2012, ApJ 758, 75
+- Halo mass function and bias: Tinker et al. 2008, 2010, via CCL (Chisari et al. 2019, ApJS 242, 2)
 - Closure radius: Ayromlou, Nelson & Pillepich 2023, arXiv:2211.07659; FLAMINGO tables (Schaye et al. 2023, arXiv:2306.04024)
 - LRG mocks: AbacusHOD (Yuan et al. 2022, MNRAS 510, 3301); `hod/prepare_sim.py` is modified from abacusutils (GPL-3.0)
 - Simulations: AbacusSummit (Maksimova et al. 2021, MNRAS 508, 4017)

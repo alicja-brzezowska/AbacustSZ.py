@@ -43,6 +43,7 @@ inference = [
     { name = "corner" },
     { name = "dynesty" },
     { name = "pandas" },
+    { name = "pyccl" },
     { name = "scikit-learn" },
 ]
 
@@ -63,6 +64,7 @@ requires-dist = [
     { name = "numpy" },
     { name = "pandas", marker = "extra == 'inference'", specifier = ">=2.3.3" },
     { name = "psutil", specifier = ">=7.2.2" },
+    { name = "pyccl", marker = "extra == 'inference'", specifier = ">=3.3" },
     { name = "pyyaml", marker = "extra == 'forward-model'" },
     { name = "quadax", specifier = ">=0.2.11" },
     { name = "scikit-learn", marker = "extra == 'inference'", specifier = ">=1.8.0" },
@@ -1244,6 +1246,24 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/04/78/0acd37ca84ce3ddffaa92ef0f571e073faa6d8ff1f0559ab1272188ea2be/psutil-7.2.2-cp36-abi3-musllinux_1_2_x86_64.whl", hash = "sha256:b58fabe35e80b264a4e3bb23e6b96f9e45a3df7fb7eed419ac0e5947c61e47cc", size = 148266, upload-time = "2026-01-28T18:15:31.597Z" },
     { url = "https://files.pythonhosted.org/packages/b4/90/e2159492b5426be0c1fef7acba807a03511f97c5f86b3caeda6ad92351a7/psutil-7.2.2-cp37-abi3-win_amd64.whl", hash = "sha256:eb7e81434c8d223ec4a219b5fc1c47d0417b12be7ea866e24fb5ad6e84b3d988", size = 137737, upload-time = "2026-01-28T18:15:33.849Z" },
     { url = "https://files.pythonhosted.org/packages/8c/c7/7bb2e321574b10df20cbde462a94e2b71d05f9bbda251ef27d104668306a/psutil-7.2.2-cp37-abi3-win_arm64.whl", hash = "sha256:8c233660f575a5a89e6d4cb65d9f938126312bca76d8fe087b947b3a1aaac9ee", size = 134617, upload-time = "2026-01-28T18:15:36.514Z" },
+]
+
+[[package]]
+name = "pyccl"
+version = "3.3.6"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy" },
+    { name = "packaging" },
+    { name = "pyyaml" },
+    { name = "scipy" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/d5/76/dc091056f1af48e6cb56d651dac6eb8494dd2515547d9543c0ce5365b873/pyccl-3.3.6.tar.gz", hash = "sha256:fd6c0181381eb57345ec9b56bdcf9300c9a31a42014aa9c8ced95f31ace16795", size = 16790489, upload-time = "2026-07-28T09:29:17.738Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/7d/66/c64c214e680539e9dfa8266af7749a474cdefa81a3753ff887a2dfb5a7d3/pyccl-3.3.6-cp313-cp313-macosx_11_0_arm64.whl", hash = "sha256:f2221b1aeb88adae11168faeb798003893bdaec0a9c6c9e5385694aab52e5f25", size = 3057374, upload-time = "2026-07-28T09:29:11.808Z" },
+    { url = "https://files.pythonhosted.org/packages/af/86/df2caee376a298ceee5afd13c348371a2537d47aea30e5316d8fc6277004/pyccl-3.3.6-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:4a943004beee16b72f4c1464008904127831b760f5c1906ea430f9bc92601380", size = 3707324, upload-time = "2026-07-28T09:29:13.224Z" },
+    { url = "https://files.pythonhosted.org/packages/99/09/6e545e891bf522fdee099dc8049d42589372550171f26593c8cc4bffabcd/pyccl-3.3.6-cp314-cp314-macosx_11_0_arm64.whl", hash = "sha256:439472a5bd43a1fd332aa65e036ea20005297310b3c18bdf5f851ebbbd64038c", size = 3057855, upload-time = "2026-07-28T09:29:14.607Z" },
+    { url = "https://files.pythonhosted.org/packages/ee/48/4eab47c2615543aa8d4d80e689659e35547824216e318aa0541ade69efff/pyccl-3.3.6-cp314-cp314-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:6fa4f7e0fe17a90aea9fb981c586143ee41a846b2192f415bb995522adf26194", size = 3707307, upload-time = "2026-07-28T09:29:16.108Z" },
 ]
 
 [[package]]

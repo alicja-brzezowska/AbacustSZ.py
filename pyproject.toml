@@ -38,6 +38,7 @@ inference = [
     "corner>=2.2.3",
     "dynesty>=3.0.0",
     "pandas>=2.3.3",
+    "pyccl>=3.3",
     "scikit-learn>=1.8.0",
 ]
 
