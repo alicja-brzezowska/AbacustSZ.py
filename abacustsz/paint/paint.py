@@ -13,8 +13,20 @@ from loguru import logger
 from abacustsz.converters import convert_rad_to_cart
 from abacustsz.cosmology.angular_size import get_angular_size_from_comoving
 from abacustsz.logging import memory_usage, time_calls, trace_calls
-from abacustsz.paint.abacus_loader import SimulationData, load_abacus_for_painting
+from abacustsz.paint.abacus_loader import (
+    SimulationData,
+    attach_ghost_halos,
+    load_abacus_for_painting,
+)
 from abacustsz.paint.config import PainterConfig
+from abacustsz.paint.ownership import (
+    CumulativeLOSTable,
+    OwnershipGeometry,
+    build_cumulative_table,
+    build_ownership_geometry,
+    compute_kept_fractions,
+    parse_gnfw_stem,
+)
 from abacustsz.paint.pixel_search import find_pixels_in_halos
 from abacustsz.paint.weights import compute_weights
 from abacustsz.paths import INTERPOLATORS_PATH
@@ -84,6 +96,67 @@ def search_radius_header(config: PainterConfig) -> dict:
     }
 
 
+def ownership_header(config: PainterConfig, geometry: OwnershipGeometry | None = None) -> dict:
+    """ASDF header entries recording the ownership treatment."""
+    h = {"ownership": config.ownership}
+    if config.ownership != "none":
+        h["ownership_c_roche"] = config.ownership_c_roche
+        h["ownership_ghost_buffer"] = config.ownership_ghost_buffer
+        if geometry is not None:
+            h["ownership_n_ghosts"] = int(geometry.n_ghost)
+            h["ownership_n_overlap_pairs"] = int(geometry.n_pairs)
+    return h
+
+
+def prepare_ownership(
+    config: PainterConfig,
+    data: SimulationData,
+    halo_catalog_index: list,
+    logm_min: float = 11.5,
+    workers: int | None = None,
+) -> OwnershipGeometry | None:
+    """Overlap geometry for the whole shell (None when ownership is off)."""
+    if config.ownership == "none":
+        return None
+    if config.ownership != "density":
+        raise ValueError(f"unknown ownership mode {config.ownership!r}")
+    workers = workers or config.pixel_search_workers or int(os.environ.get("SLURM_CPUS_PER_TASK", 8))
+
+    m = np.asarray(data.m_halos, dtype=np.float64)
+    r200 = np.asarray(data.radii_halos, dtype=np.float64)
+    r_paint = r200 * search_radius_multiplier(config, m).astype(np.float64)
+    buffer = config.ownership_ghost_buffer * float(r_paint.max())
+    attach_ghost_halos(data, halo_catalog_index, buffer, logm_min=logm_min)
+    logger.info(
+        f"ownership: {len(data.ghost_m_halos):,} ghost halos within {buffer:.2f} Mpc/h of the shell "
+        f"edges chi=[{data.chi_min:.1f}, {data.chi_max:.1f}]"
+    )
+    if len(data.ghost_m_halos):
+        gm = np.asarray(data.ghost_m_halos, dtype=np.float64)
+        gr200 = np.asarray(data.ghost_radii, dtype=np.float64)
+        g_rp = gr200 * search_radius_multiplier(config, gm).astype(np.float64)
+        g_logm = np.log10(gm)
+    else:
+        gr200 = g_rp = g_logm = np.zeros(0)
+    return build_ownership_geometry(
+        data.halo_xyz_comoving, r200, r_paint, np.log10(m),
+        data.ghost_xyz, gr200, g_rp, g_logm,
+        c_roche=config.ownership_c_roche, workers=workers,
+    )
+
+
+def cumulative_table_for(
+    data: SimulationData, alpha: float, beta0: float, gamma: float
+) -> CumulativeLOSTable:
+    """Chord table for one gNFW shape at the shell redshift."""
+    logm = np.log10(np.asarray(data.m_halos, dtype=np.float64))
+    lo, hi = float(logm.min()), float(logm.max())
+    if data.ghost_m_halos is not None and len(data.ghost_m_halos):
+        glog = np.log10(np.asarray(data.ghost_m_halos, dtype=np.float64))
+        lo, hi = min(lo, float(glog.min())), max(hi, float(glog.max()))
+    return build_cumulative_table(alpha, beta0, gamma, float(data.redshift), lo, hi)
+
+
 @dataclass
 class PaintContext:
     pix_in_halos: np.ndarray
@@ -97,6 +170,9 @@ class PaintContext:
     data: SimulationData
     config: PainterConfig
     r_search: np.ndarray  # per-halo search radii (radians), same length as data.m_halos
+    ownership: OwnershipGeometry | None = None
+    global_halo_idx: np.ndarray | None = None
+    _kept_cache: tuple | None = None
 
 
 @memory_usage
@@ -106,6 +182,8 @@ def build_paint_context(
     config: PainterConfig,
     data: SimulationData,
     use_weights: bool = True,
+    ownership: OwnershipGeometry | None = None,
+    global_halo_idx: np.ndarray | None = None,
 ) -> PaintContext:
     logger.info(
         "CPU threads: "
@@ -195,6 +273,11 @@ def build_paint_context(
 
     z_values = np.full_like(zeta, data.redshift, dtype=np.float32)
 
+    if config.ownership != "none" and ownership is None:
+        raise ValueError("config.ownership is set but no OwnershipGeometry was passed (call prepare_ownership)")
+    if ownership is not None and global_halo_idx is None:
+        global_halo_idx = np.arange(len(data.m_halos), dtype=np.int64)
+
     return PaintContext(
         pix_in_halos=pix_in_halos,
         zeta=zeta,
@@ -207,6 +290,8 @@ def build_paint_context(
         data=data,
         config=config,
         r_search=r_search,
+        ownership=ownership,
+        global_halo_idx=global_halo_idx,
     )
 
 
@@ -221,21 +306,51 @@ def _slice_simulation_data(data: SimulationData, halo_idx: np.ndarray) -> Simula
         eigenvalues=data.eigenvalues[halo_idx],
         eigenvectors=data.eigenvectors[halo_idx],
         chi=data.chi[halo_idx] if data.chi is not None else None,
+        chi_min=data.chi_min,
+        chi_max=data.chi_max,
+        ghost_xyz=data.ghost_xyz,
+        ghost_m_halos=data.ghost_m_halos,
+        ghost_radii=data.ghost_radii,
     )
+
+
+def kept_fractions_for(ctx: PaintContext, table: CumulativeLOSTable) -> np.ndarray:
+    """Kept fractions for this context, cached per table."""
+    if ctx._kept_cache is not None and ctx._kept_cache[0] is table:
+        return ctx._kept_cache[1]
+    kept = compute_kept_fractions(
+        ctx.pix_in_halos, ctx.halo_starts, ctx.halo_counts, ctx.global_halo_idx,
+        ctx.ownership, table, ctx.config.nside, nest=True, chunk=ctx.config.ownership_pair_chunk,
+    )
+    ctx._kept_cache = (table, kept)
+    return kept
 
 
 def paint_one_interpolator(
     ctx: PaintContext,
     interpolator: BattagliaLogInterpolator,
-) -> np.ndarray:
+    cumulative_table: CumulativeLOSTable | None = None,
+    also_unowned: bool = False,
+) -> np.ndarray | tuple[np.ndarray, np.ndarray]:
+    """Paint one interpolator; with also_unowned, also return the map without ownership."""
+    npix = hp.nside2npix(ctx.config.nside)
     y_values = interpolator.eval_for_logs(
         ctx.log_distances, ctx.z_values, ctx.log_M_values
-    ) 
-    y_values = np.asarray(y_values, dtype=np.float64) * ctx.weights
-    y_map = np.bincount(
-        ctx.pix_in_halos, weights=y_values, minlength=hp.nside2npix(ctx.config.nside)
     )
-    return y_map.astype(np.float32)
+    y_values = np.asarray(y_values, dtype=np.float64) * ctx.weights
+    unowned_map = None
+    if also_unowned:
+        if ctx.ownership is None:
+            raise ValueError("also_unowned only makes sense with ownership enabled")
+        unowned_map = np.bincount(ctx.pix_in_halos, weights=y_values, minlength=npix).astype(np.float32)
+    if ctx.ownership is not None:
+        if cumulative_table is None:
+            raise ValueError("ownership is enabled: pass the CumulativeLOSTable for this interpolator")
+        y_values *= kept_fractions_for(ctx, cumulative_table)
+    y_map = np.bincount(ctx.pix_in_halos, weights=y_values, minlength=npix).astype(np.float32)
+    if also_unowned:
+        return y_map, unowned_map
+    return y_map
 
 
 def _make_short_filename(interp_stem: str) -> str:
@@ -279,6 +394,7 @@ def paint_abacus(
         nside=config.nside,
         logm_min=logm_min,
     )
+    ownership = prepare_ownership(config, data, halo_catalog_index, logm_min=logm_min)
     paint_y_maps(
         config,
         data,
@@ -287,6 +403,7 @@ def paint_abacus(
         use_weights=use_weights,
         run_label=run_label,
         interp_dir=interp_dir,
+        ownership=ownership,
     )
 
 
@@ -298,7 +415,13 @@ def paint_y_maps(
     use_weights: bool = True,
     run_label: str = "",
     interp_dir: Path | None = None,
+    ownership: OwnershipGeometry | None = None,
 ):
+    def _table_for(int_filename: str) -> CumulativeLOSTable | None:
+        if ownership is None:
+            return None
+        return cumulative_table_for(data, *parse_gnfw_stem(Path(int_filename).stem))
+
     if output_file:
         output_path = Path(output_file)
         step_name = (
@@ -339,6 +462,7 @@ def paint_y_maps(
                         "nest": True,
                         "redshift": data.redshift,
                         **search_radius_header(config),
+                        **ownership_header(config, ownership),
                         "bin_width": config.weight_bin_width,
                         "halo_geometry": config.halo_geometry,
                         "healpix_file": str(healcounts_file_1)
@@ -358,7 +482,7 @@ def paint_y_maps(
     n_batches = max(1, config.n_halo_batches)
 
     if n_batches <= 1:
-        ctx = build_paint_context(config, data, use_weights=use_weights)
+        ctx = build_paint_context(config, data, use_weights=use_weights, ownership=ownership)
 
         for int_filename in interp_files:
             logger.info(f"Processing interpolator: {Path(int_filename).name}")
@@ -370,7 +494,7 @@ def paint_y_maps(
                 out.unlink()
 
             interpolator = BattagliaLogInterpolator.from_pickle(Path(int_filename))
-            ymap = paint_one_interpolator(ctx, interpolator)
+            ymap = paint_one_interpolator(ctx, interpolator, _table_for(int_filename))
             del interpolator
 
             _write_map(int_filename, out, ymap)
@@ -399,15 +523,18 @@ def paint_y_maps(
 
     n_halos = len(data.m_halos)
     batches = [b for b in np.array_split(np.arange(n_halos), n_batches) if len(b) > 0]
+    tables = {int_filename: _table_for(int_filename) for int_filename, _ in targets}
 
     for i, halo_idx in enumerate(batches):
         logger.info(f"Halo batch {i + 1}/{len(batches)}: {len(halo_idx):,} halos")
         batch_data = _slice_simulation_data(data, halo_idx)
-        ctx = build_paint_context(config, batch_data, use_weights=use_weights)
+        ctx = build_paint_context(
+            config, batch_data, use_weights=use_weights, ownership=ownership, global_halo_idx=halo_idx
+        )
 
         for int_filename, _ in targets:
             logger.info(f"  Processing interpolator: {Path(int_filename).name}")
-            contribution = paint_one_interpolator(ctx, interpolators[int_filename])
+            contribution = paint_one_interpolator(ctx, interpolators[int_filename], tables[int_filename])
             y_maps[int_filename] += contribution
             del contribution
 

@@ -5,6 +5,7 @@ from pathlib import Path
 import asdf
 import healpy as hp
 import numpy as np
+from loguru import logger
 from abacusnbody.data.compaso_halo_catalog import (
     _unpack_euler16 as unpack_euler16,  # data is compressed using this custom abacus encoding
 )
@@ -29,10 +30,21 @@ class SimulationData:
     eigenvalues: np.ndarray  # (n_halos, 3) semi-axis lengths in physical Mpc
     eigenvectors: np.ndarray  # (n_halos, 3, 3) rows are maj > mid > min eigenvectors
     chi: np.ndarray = None  # comoving distance per halo [Mpc/h]
+    # shell edges and neighbouring-shell halos (ownership only, never painted)
+    chi_min: float | None = None
+    chi_max: float | None = None
+    ghost_xyz: np.ndarray | None = None  # (n_ghost, 3) comoving Mpc/h
+    ghost_m_halos: np.ndarray | None = None  # M200c [Msun]
+    ghost_radii: np.ndarray | None = None  # R200c, comoving Mpc/h
 
     @property
     def halo_xyz(self):
         return convert_rad_to_cart(self.theta, self.phi)
+
+    @property
+    def halo_xyz_comoving(self):
+        """(n_halos, 3) comoving positions [Mpc/h], observer at the origin."""
+        return convert_rad_to_cart(self.theta, self.phi) * np.asarray(self.chi, dtype=np.float64)[:, None]
 
 
 def load_abacus_healcounts(filepath: Path):
@@ -57,9 +69,40 @@ def obtain_healcount_mean_redshift(filepath: Path) -> float:
     return float(np.mean(zs))
 
 
+def find_duplicate_halos(
+    halo_timeslice_index: np.ndarray,
+    halo_xyz: np.ndarray,
+    comoving_distance: np.ndarray,
+    max_separation: float = 1.0,
+    n_neighbours: int = 4,
+) -> np.ndarray:
+    """Mask of rows repeating an earlier row: same time-slice halo within max_separation [Mpc/h].
+
+    Periodic images (one box length apart) are kept.
+    """
+    n = len(halo_timeslice_index)
+    dup = np.zeros(n, dtype=bool)
+    if n < 2:
+        return dup
+    order = np.lexsort((comoving_distance, halo_timeslice_index))
+    ti = np.asarray(halo_timeslice_index)[order]
+    for k in range(1, n_neighbours + 1):
+        cand = np.flatnonzero(ti[k:] == ti[:-k])
+        if len(cand) == 0:
+            break  # no group has more than k members
+        a, b = order[cand], order[cand + k]
+        d = np.linalg.norm(
+            np.asarray(halo_xyz[a], dtype=np.float64) - np.asarray(halo_xyz[b], dtype=np.float64), axis=1
+        )
+        close = d < max_separation
+        dup[np.maximum(a[close], b[close])] = True
+    return dup
+
+
 def load_abacus_halos(
     halo_dir: Path,
     logm_min: float = 11.5,
+    dedupe: bool = True,
 ):
     with asdf.open(halo_dir) as af:
         h = af["header"]
@@ -86,6 +129,21 @@ def load_abacus_halos(
         m_halos = m_halos[cut]
         halo_timeslice_index = halo_timeslice_index[cut]
         comoving_distance = comoving_distance[cut]
+
+        if dedupe:
+            # halos written twice at the faces between periodic box copies
+            dup = find_duplicate_halos(halo_timeslice_index, halo_xyz, comoving_distance)
+            if dup.any():
+                logger.info(
+                    f"{Path(halo_dir).parent.name}: dropping {int(dup.sum()):,} duplicated light-cone halos "
+                    f"({dup.mean():.3%} of those above the mass cut)"
+                )
+                keep = ~dup
+                halo_xyz = halo_xyz[keep]
+                num_particles = num_particles[keep]
+                m_halos = m_halos[keep]
+                halo_timeslice_index = halo_timeslice_index[keep]
+                comoving_distance = comoving_distance[keep]
 
         # CompaSO masses are defined at SODensityL1 x mean density, not 200m
         m_halos = mdeltamean_to_m200m(m_halos, so_density_l1, redshift)
@@ -200,4 +258,53 @@ def load_abacus_for_painting(
         eigenvalues,
         eigenvectors,
         chi=chi,
+        chi_min=float(chi_min),
+        chi_max=float(chi_max),
     )
+
+
+def load_ghost_halos(
+    halo_catalog_index: list,
+    chi_min: float,
+    chi_max: float,
+    buffer: float,
+    redshift: float,
+    logm_min: float = 11.5,
+):
+    """Neighbouring-shell halos within buffer [Mpc/h] of the shell edges, with the shell's cuts.
+
+    Returns (xyz [comoving Mpc/h], M200c [Msun], R200c [comoving Mpc/h]).
+    """
+    lo, hi = chi_min - buffer, chi_max + buffer
+    xyz_l, m_l = [], []
+    for cat in halo_catalog_index:
+        if max(cat.chi_min, lo) > min(cat.chi_max, hi):
+            continue
+        xyz, _, _, _, chi_cat, _, _, m200m = load_abacus_halos(cat.file_path, logm_min=logm_min)
+        sel = ((chi_cat >= lo) & (chi_cat < chi_min)) | ((chi_cat > chi_max) & (chi_cat <= hi))
+        xyz_l.append(xyz[sel])
+        m_l.append(m200m[sel])
+    if not xyz_l or sum(len(a) for a in xyz_l) == 0:
+        return np.zeros((0, 3)), np.zeros(0), np.zeros(0)
+    xyz = np.concatenate(xyz_l).astype(np.float64)
+    m200c_h, r200c_phys_kpch = m200m_to_m200c(np.concatenate(m_l), redshift)
+    m = m200c_h / H_ABACUS
+    r200 = (r200c_phys_kpch / 1000.0) * (1.0 + redshift)
+    keep = m <= MAX_M200C_MSUN
+    return xyz[keep], m[keep], r200[keep]
+
+
+def attach_ghost_halos(
+    data: SimulationData,
+    halo_catalog_index: list,
+    buffer: float,
+    logm_min: float = 11.5,
+) -> SimulationData:
+    """Fill data.ghost_* from the neighbouring shells (in place; returns data)."""
+    if data.chi_min is None or data.chi_max is None:
+        raise ValueError("SimulationData has no shell edges; load it with load_abacus_for_painting")
+    xyz, m, r200 = load_ghost_halos(
+        halo_catalog_index, data.chi_min, data.chi_max, buffer, float(data.redshift), logm_min
+    )
+    data.ghost_xyz, data.ghost_m_halos, data.ghost_radii = xyz, m, r200
+    return data

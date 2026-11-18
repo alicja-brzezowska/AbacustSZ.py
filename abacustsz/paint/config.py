@@ -15,3 +15,9 @@ class PainterConfig:
     # None -> SLURM_CPUS_PER_TASK, else 8
     pixel_search_workers: int | None = None
     n_halo_batches: int = 1
+    # "density" needs interpolators built with TSZ_LOS_GEOMETRY=sphere
+    ownership: Literal["none", "density"] = "none"
+    ownership_c_roche: float = 1.0
+    # ghost buffer in units of the largest R_p in the shell
+    ownership_ghost_buffer: float = 2.2
+    ownership_pair_chunk: int = 20_000_000

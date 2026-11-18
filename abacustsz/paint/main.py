@@ -24,6 +24,9 @@ def main():
     parser.add_argument("--run-label", default="", help="Prefix for output step directory, e.g. 'focused'")
     parser.add_argument("--interp-dir", default=None, help="Path to interpolator .pkl files (overrides default INTERPOLATORS_PATH)")
     parser.add_argument("--n-halo-batches", type=int, default=1, help="Split halos into this many sequential batches to cap peak memory (1 = no batching)")
+    parser.add_argument("--ownership", choices=["none", "density"], default="none",
+                        help="needs TSZ_LOS_GEOMETRY=sphere interpolators")
+    parser.add_argument("--c-roche", type=float, default=1.0, help="advantage of the heavier halo (1 = symmetric)")
     args = parser.parse_args()
 
     setup_logging("main")
@@ -35,6 +38,8 @@ def main():
         search_radius_mass_threshold_msun=SEARCH_RADIUS_MASS_THRESHOLD,
         weight_bin_width=WEIGHT_BIN_WIDTH,
         n_halo_batches=args.n_halo_batches,
+        ownership=args.ownership,
+        ownership_c_roche=args.c_roche,
     )
     halo_catalog_index = load_halo_catalog_index(
         OUTPUT_PATH / "halo_catalog_index.json"
@@ -47,6 +52,7 @@ def main():
     logger.info(f"Output file: {output_file}")
     logger.info(f"logM min: {LOGM_MIN}")
     logger.info(f"Search radius mode: {SEARCH_RADIUS_MODE}")
+    logger.info(f"Ownership: {args.ownership} (c_roche={args.c_roche:g})")
     logger.info(f"Run label: {args.run_label!r}")
     logger.info(f"Interp dir: {args.interp_dir}")
 
