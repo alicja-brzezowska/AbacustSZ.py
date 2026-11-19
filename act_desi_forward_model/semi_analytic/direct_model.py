@@ -145,7 +145,7 @@ class TwoHalo:
 
         logm = np.linspace(LOGM_MIN_2H, LOGM_MAX_2H, nm)
         masses = 10.0**logm
-        dlnm = np.log(10.0) * (logm[1] - logm[0])
+        dlog10m = logm[1] - logm[0]  # CCL returns dn/dlog10M
         rt = truncation_radius(masses)
 
         H, log_xbar, beta_scale, p200 = [], [], [], []
@@ -163,7 +163,7 @@ class TwoHalo:
             T = (n_z[j] / n_z.sum()) * P_E_OVER_P_TH * P_E_FACTOR * (ap.filter @ proj @ xi_of_P)
             T = T * (b_lrg * linear_power(k, z))[None, :]
 
-            nb = np.array([halo_mass_function(m, z) * halo_bias(m, z) for m in masses]) * dlnm
+            nb = np.array([halo_mass_function(m, z) * halo_bias(m, z) for m in masses]) * dlog10m
             zz = np.full(nm, z)
             R200 = r200c(masses, zz)
             xc, bsc, p0_scale = gnfw_scalings(masses, zz)

@@ -34,7 +34,7 @@ from halo_model import mean_host_bias  # noqa: E402
 from inference import gaussian_loglike, load_act  # noqa: E402
 
 NAMES = ["alpha", "beta0", "gamma", "log10P0", "A2h"]
-BOUNDS = np.array([[0.1, 2.0], [0.1, 6.0], [-1.0, -0.1], [-2.0, 2.0], [0.0, 3.0]])
+BOUNDS = np.array([[0.1, 2.0], [0.1, 6.0], [-1.0, -0.1], [-2.0, 2.0], [0.0, 12.0]])
 CHI_STEPS = STEPS[7:18]  # LRGs between Step0617-0622 and Step0677-0682
 N_M_BINS, N_Z_BINS, Z_RANGE = 150, 15, (0.4, 0.8)
 
@@ -101,7 +101,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--freq", type=int, choices=[90, 150], default=150)
     parser.add_argument("--fix-gamma", type=float, help="e.g. -0.3")
-    parser.add_argument("--a2h-max", type=float, default=3.0)
+    parser.add_argument("--a2h-max", type=float, default=12.0)
     parser.add_argument("--no-satellites", action="store_true", help="put satellites at their host's centre")
     parser.add_argument("--lrg-dir", type=Path, default=OUTPUT_PATH / "hod_mocks" / "lightcone_halos")
     parser.add_argument("--lrg-file", default="LRGs.dat")
