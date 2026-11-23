@@ -89,21 +89,39 @@ def main():
 
     samples = resample_equal(res.samples, np.exp(res.logwt - res.logz[-1]))
     theta_map = res.samples[np.argmax(res.logl)]
-    mu, sig = em.predict(theta_map)
-    r = y - mu[0]
-    chi2 = float(r @ np.linalg.solve(cov + np.diag(sig[0] ** 2), r))
-    dof = len(y) - len(names)
+
+    # chi2 with the likelihood covariance (not -2 logL, which also has the theta-dependent log-determinant)
+    def chi2_of(theta):
+        mu, sig = em.predict(theta)
+        r = y - mu[0]
+        return float(r @ np.linalg.solve(cov + np.diag(sig[0] ** 2), r))
+
+    chi2 = chi2_of(theta_map)
+
+    # effective number of parameters, Raveri & Hu (2019): N_par - tr(C_prior^-1 C_post),
+    # with the uniform prior replaced by a Gaussian of the same variance (hi - lo)^2 / 12
+    c_prior = np.diag((bounds[:, 1] - bounds[:, 0]) ** 2 / 12.0)
+    n_eff_rh = len(names) - float(np.trace(np.linalg.solve(c_prior, np.cov(samples.T))))
+
+    # effective number of parameters, Bayesian complexity: <chi2>_posterior - chi2(MAP)
+    rng = np.random.default_rng(args.seed)
+    subset = samples[rng.choice(len(samples), min(5000, len(samples)), replace=False)]
+    n_eff_bc = float(np.mean([chi2_of(t) for t in subset])) - chi2
 
     for i, name in enumerate(names):
         lo, med, hi = np.percentile(samples[:, i], [16, 50, 84])
         print(f"{name:8s} = {med:.3f} +{hi - med:.3f} -{med - lo:.3f}   (MAP {theta_map[i]:.3f})")
-    print(f"chi2 = {chi2:.2f} for {dof} dof, p = {chi2_dist.sf(chi2, dof):.3f}")
+    print(f"chi2(MAP) = {chi2:.2f} for {len(y)} data points")
+    for label, n_eff in [("N_par", len(names)), ("Raveri & Hu", n_eff_rh), ("Bayesian complexity", n_eff_bc)]:
+        dof = len(y) - n_eff
+        print(f"  {label:20s} N_eff = {n_eff:.2f}  dof = {dof:.2f}  p = {chi2_dist.sf(chi2, dof):.3f}")
     print(f"log Z = {res.logz[-1]:.3f} +- {res.logzerr[-1]:.3f}")
 
     np.savez(
         out / f"posterior_f{args.freq:03d}.npz",
         samples=samples, param_names=names, prior_bounds=bounds, theta_map=theta_map,
         apertures=apertures, y_act=y, cov_act=cov, logz=res.logz[-1], logzerr=res.logzerr[-1],
+        chi2_map=chi2, n_eff_rh=n_eff_rh, n_eff_bc=n_eff_bc,
     )
     corner.corner(samples, labels=names, truths=theta_map, show_titles=True).savefig(
         out / f"corner_f{args.freq:03d}.png", dpi=150
