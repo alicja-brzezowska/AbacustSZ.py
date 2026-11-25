@@ -28,6 +28,7 @@ AbacustSZ/
 │   │   ├── preconvolve_maps.py # ACT beam convolution
 │   │   ├── stack_lrgs.py       # Ring-ring stacking on mock LRGs -> emulator training set
 │   │   └── hod/                # LRG mocks with AbacusHOD (modified abacusutils for lightcone format)
+│   │                           #   and thinning by host halo to the target mean host mass
 │   │
 │   ├── inference/
 │   │   ├── emulator.py         # Gaussian-process emulator of the stacked profile
@@ -47,6 +48,7 @@ AbacustSZ/
 │       ├── training_sets/             # Stacked profiles of the 128 LHC maps (emulator training set)
 │       └── emulators/                 # Trained GP emulator (f150, row 115 excluded; scikit-learn 1.9.1)
 │
+├── LICENSE
 ├── README.md
 ├── pyproject.toml
 └── uv.lock
@@ -100,9 +102,12 @@ $$
 
 The free parameters are $(\alpha, \beta_0, \gamma, \log_{10} P_0)$, with $M \equiv M_{200c}$; Battaglia et al. find $(1, 4.35, -0.3, 1.26)$.
 
-The profile is truncated at the baryon closure radius by default. Environment variables:
-`TSZ_TRUNCATION_MODE` (`closure` / `legacy`), `TSZ_CLOSURE_TABLE` (`flamingo_hifb` / `z0p75`),
-`TSZ_LOS_GEOMETRY` (`cylinder` / `sphere`).
+The defaults are the settings used in the thesis: the profile is truncated in a sphere at the
+baryon closure radius of the FLAMINGO high-feedback run, halos are painted with spherical
+footprints, and gas in overlapping halo volumes is assigned to one halo only (ownership).
+The truncation is set by environment variables when the tables are built (first value is the
+default): `TSZ_TRUNCATION_MODE` (`closure` / `legacy`), `TSZ_CLOSURE_TABLE` (`flamingo_hifb` /
+`z0p75`), `TSZ_LOS_GEOMETRY` (`sphere` / `cylinder`).
 
 **2. Tabulate y(theta, z, M)** for those parameters, (default grid: 0.2 < z < 1, 10^11 < M < 10^15.7 Msun):
 
@@ -126,7 +131,10 @@ with asdf.open(path) as f:
     y = f["data"]["y_map"][:]
 ```
 
-Halos are painted as triaxial ellipsoids, weighted by the particle counts of the heal-counts map.
+Halos are painted as discs out to the closure radius, weighted by the particle counts of the
+heal-counts map, and overlapping halos split the gas between them (`--ownership density`, which
+needs tables built with `TSZ_LOS_GEOMETRY=sphere`). `--ownership none --halo-geometry triaxial`
+paints every halo in full with a triaxial footprint.
 Halos with N m_p < 10^11.5 Msun/h are skipped, and halos above the ACT DR5 cluster-mask threshold
 (M500c > 3.8e14 Msun) are removed (manually change the upper and lower mass threshold for needs).
 
@@ -172,13 +180,17 @@ uv run python -m abacustsz.paint.main --step LightCone0_total_heal-counts_<STEP>
 uv run python forward_model/sum_y_maps.py
 uv run python forward_model/preconvolve_maps.py --freq f150
 uv run python forward_model/hod/prepare_sim.py --path2config forward_model/hod/config.yaml --alt_z <z>   # per z in config.py
-uv run python forward_model/hod/run_hod.py --z <z>
+uv run python forward_model/hod/run_hod.py --z <z>                                       # per z in config.py
+uv run python forward_model/hod/thin_hosts.py                                            # LRGs.dat -> LRGs_thinned.dat
 uv run python forward_model/stack_lrgs.py $ABACUSTSZ_OUTPUT/preconvolved_Step0571-0576_f150 --out training_f150.npz
 uv run python inference/inference.py training_f150.npz
 ```
 
-Truncation options (environment variables): `TSZ_TRUNCATION_MODE` (`closure` / `legacy`),
-`TSZ_CLOSURE_TABLE` (`flamingo_hifb` / `z0p75`), `TSZ_LOS_GEOMETRY` (`cylinder` / `sphere`).
+The LRG mocks use the HOD in `hod/config.yaml` (a small-scale CMB-lensing fit to the DESI DR9
+LRGs). `thin_hosts.py` then removes whole halos above M200m = 10^13.5 Msun/h with probability
+1 - (M/10^13.5)^-s, with s chosen so that the mean host mass of the stacked LRGs is
+log10 <M200m> = 13.25 [Msun/h]; the stacking and the semi-analytic model read the thinned
+`LRGs_thinned.dat`.
 
 ### Semi-analytic model (direct evaluation)
 
@@ -192,14 +204,18 @@ closure radius (`TSZ_CLOSURE_TABLE`, `TSZ_TRUNCATION_MODE`).
 ```bash
 uv sync --extra inference
 export ABACUS_DATA_PATH=/path/to/backlight_cp999
-export ABACUSTSZ_OUTPUT=/path/to/output     # contains hod_mocks/lightcone_halos/z*/galaxies_rsd/LRGs.dat
+export ABACUSTSZ_OUTPUT=/path/to/output     # contains hod_mocks/lightcone_halos/z*/galaxies_rsd/LRGs_thinned.dat
 cd act_desi_forward_model/semi_analytic
-uv run python run_direct.py --freq 150 --fix-gamma -0.3 --a2h-max 5 --nproc 32 --out results_direct_f150
+uv run python run_direct.py --freq 150 --fix-gamma -0.3 --nproc 32 --out results_direct_f150
 ```
 
 A run with 1500 live points takes about an hour on 56 cores; `--resume` continues from
 `<out>/dynesty.save`.
 
+
+## License
+
+GPL-3.0-or-later, see [LICENSE](LICENSE).
 
 ## Credits
 
