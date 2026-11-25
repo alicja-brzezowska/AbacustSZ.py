@@ -28,24 +28,32 @@ _theta = _phi = None
 _threads = 1
 
 
+def so_density(z):
+    """Overdensity (x mean) of the CompaSO masses in the catalogue's "mass" column."""
+    with asdf.open(HALO_CATALOGS_PATH / f"z{z}" / "lightcone_halo_info_000.asdf", lazy_load=True) as af:
+        return float(af["header"]["SODensityL1"])
+
+
 def max_raw_mass(z):
     """The painting mass cut (M200c <= MAX_M200C_MSUN) in the catalogue's raw SO mass [Msun/h]."""
-    with asdf.open(HALO_CATALOGS_PATH / f"z{z}" / "lightcone_halo_info_000.asdf", lazy_load=True) as af:
-        so_density = float(af["header"]["SODensityL1"])
     m200m = m200c_to_m200m(MAX_M200C_MSUN * H_ABACUS, float(z))
-    return m200m_to_mdeltamean(m200m, so_density, float(z))
+    return m200m_to_mdeltamean(m200m, so_density(z), float(z))
+
+
+def in_painted_shells(chi):
+    """True for comoving distances [Mpc/h] inside one of the painted shells."""
+    shells = [obtain_healcount_edges(HEALCOUNTS_TOTAL_PATH / healcounts_file(s)) for s in STEPS]
+    return np.any([(chi >= lo) & (chi <= hi) for lo, hi in shells], axis=0)
 
 
 def load_lrgs(lrg_dir, lrg_file, max_lrgs, seed=42):
     """LRG sky positions, keeping galaxies inside painted shells and below the painting mass cut."""
     x, y, z, keep = [], [], [], []
-    shells = [obtain_healcount_edges(HEALCOUNTS_TOTAL_PATH / healcounts_file(s)) for s in STEPS]
     for zsnap in LRG_REDSHIFTS:
         t = Table.read(lrg_dir / f"z{zsnap}" / "galaxies_rsd" / lrg_file, format="ascii.ecsv")
         xi, yi, zi = (np.asarray(t[c]) for c in ("x", "y", "z"))
         chi = np.sqrt(xi**2 + yi**2 + zi**2)
-        painted = np.any([(chi >= lo) & (chi <= hi) for lo, hi in shells], axis=0)
-        keep.append(painted & (np.asarray(t["mass"]) <= max_raw_mass(zsnap)))
+        keep.append(in_painted_shells(chi) & (np.asarray(t["mass"]) <= max_raw_mass(zsnap)))
         x.append(xi)
         y.append(yi)
         z.append(zi)
@@ -75,7 +83,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("maps_dir", type=Path, help="beam-convolved .npy maps (preconvolve_maps.py)")
     parser.add_argument("--lrg-dir", type=Path, default=OUTPUT_PATH / "hod_mocks" / "lightcone_halos")
-    parser.add_argument("--lrg-file", default="LRGs.dat")
+    parser.add_argument("--lrg-file", default="LRGs_thinned.dat", help="hod/thin_hosts.py output")
     parser.add_argument("--max-lrgs", type=int, default=3_000_000)
     parser.add_argument("--nproc", type=int, default=8)
     parser.add_argument("--out", type=Path, required=True)

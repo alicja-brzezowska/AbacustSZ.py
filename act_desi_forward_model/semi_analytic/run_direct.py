@@ -104,7 +104,7 @@ def main():
     parser.add_argument("--a2h-max", type=float, default=12.0)
     parser.add_argument("--no-satellites", action="store_true", help="put satellites at their host's centre")
     parser.add_argument("--lrg-dir", type=Path, default=OUTPUT_PATH / "hod_mocks" / "lightcone_halos")
-    parser.add_argument("--lrg-file", default="LRGs.dat")
+    parser.add_argument("--lrg-file", default="LRGs_thinned.dat")
     parser.add_argument("--nlive", type=int, default=1500)
     parser.add_argument("--dlogz", type=float, default=0.1)
     parser.add_argument("--nproc", type=int, default=mp.cpu_count())
