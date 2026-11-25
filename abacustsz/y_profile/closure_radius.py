@@ -80,7 +80,7 @@ if CLOSURE_INTERP not in ("interp", "step"):
 
 # cylinder: LOS integral over |l| < R_t at every projected radius
 # sphere:   P(r) = 0 for r > R_t in 3D
-LOS_GEOMETRY = os.environ.get("TSZ_LOS_GEOMETRY", "cylinder").lower()
+LOS_GEOMETRY = os.environ.get("TSZ_LOS_GEOMETRY", "sphere").lower()
 if LOS_GEOMETRY not in ("cylinder", "sphere"):
     raise ValueError(f"TSZ_LOS_GEOMETRY must be 'cylinder' or 'sphere', got {LOS_GEOMETRY!r}")
 

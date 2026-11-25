@@ -112,9 +112,12 @@ def main():
 
     config = PainterConfig(
         nside=NSIDE,
+        search_radius_mode="legacy",
         search_radius_low_mass=N,
         search_radius_high_mass=N,
         weight_bin_width=WEIGHT_BIN_WIDTH,
+        halo_geometry="triaxial",
+        ownership="none",
     )
     halo_catalog_index = load_halo_catalog_index(
         OUTPUT_PATH / "halo_catalog_index.json"

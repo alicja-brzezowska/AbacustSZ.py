@@ -1,4 +1,5 @@
 import os
+import pickle
 import re
 from dataclasses import dataclass
 from glob import glob
@@ -440,6 +441,15 @@ def paint_y_maps(
         for f in glob(str(search_dir / "*.pkl"))
         if re.search(r"alpha=", Path(f).name)
     )
+    if ownership is not None:
+        for f in interp_files:
+            with open(f, "rb") as fh:
+                tag = pickle.load(fh).get("truncation", "")
+            if not tag.endswith("_sphere"):
+                raise ValueError(
+                    f"{Path(f).name} has truncation {tag!r}; ownership needs interpolators "
+                    "built with TSZ_LOS_GEOMETRY=sphere (or paint with --ownership none)"
+                )
 
     def _output_path_for(int_filename: str) -> Path | None:
         if not output_file:
