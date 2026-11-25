@@ -8,6 +8,8 @@ version = "0.1.0"
 description = "Thermal SZ (Compton-y) maps painted onto AbacusSummit light-cone halos"
 readme = "README.md"
 requires-python = ">=3.13"
+license = "GPL-3.0-or-later"
+license-files = ["LICENSE"]
 authors = [{ name = "Alicja Brzezowska" }]
 dependencies = [
     "abacusutils>=2.1.2",
