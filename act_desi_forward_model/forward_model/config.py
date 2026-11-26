@@ -2,9 +2,7 @@
 
 STEPS are the heal-counts shells of the AbacusSummit_backlight_cp999 light cone
 that are painted and summed: 0.49 < z < 0.79 (1288 < chi < 1920 Mpc/h), the
-redshift range of the LRG mocks. Step0577-0581 (chi 1862-1889 Mpc/h) has no
-heal-counts file, so galaxies in that gap are left out of the stack.
-data/light_cone_shells.txt lists which halo snapshots fill each shell.
+redshift range of the LRG mocks.
 
 LRG_REDSHIFTS are the halo-catalogue snapshots populated with LRGs by hod/run_hod.py.
 """
